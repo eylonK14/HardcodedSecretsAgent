@@ -3,11 +3,7 @@
 # אם אתה משתמש ב-llama.cpp:
 # pip install llama-cpp-python
 
-from llama_cpp import Llama
-
-llm = Llama(model_path="models/llama-2-7b-chat.ggmlv3.q4_0.bin", n_ctx=2048)
-
-def extract_secret_candidates_llama(file_path, file_content):
+def extract_secret_candidates_llama(llm,file_path, file_content):
     prompt = f"""The following code is from a file called `{file_path}`.
 Analyze the code and identify any string literals that may represent hardcoded secrets, like passwords, tokens, API keys, or private keys.
 

@@ -15,13 +15,12 @@ if __name__ == "__main__":
     git_url = "https://github.com/AdamSinale/AI_test_env.git"
     repo_path = clone_repo(git_url)
 
-    # שלב 2: מציאת ההקשר של כל סוד והקבצים שמשתמשים בו
-    print("[*] Running context analyzer...")
-    full_analysis = step2_analyze_secrets(repo_path)
-
-    # שלב 3: הרצת LLaMA על ההקשר
     print("[*] Initializing LLaMA model...")
     llm = Llama(model_path="models/llama-2-7b-chat.Q4_K_M.gguf", n_ctx=2048)
+
+    # שלב 2: מציאת ההקשר של כל סוד והקבצים שמשתמשים בו
+    print("[*] Running context analyzer...")
+    full_analysis = step2_analyze_secrets(llm, repo_path)
 
     print("\n[+] Final analysis with LLaMA:\n")
     for idx, entry in enumerate(full_analysis, 1):

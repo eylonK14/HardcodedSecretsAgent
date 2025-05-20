@@ -77,41 +77,40 @@ def collect_related_code(files: Set[str]) -> str:
             continue
     return combined_code
 
-
-def step2_analyze_secrets(repo_path: str):
+def step2_analyze_secrets(llm,repo_path: str):
     all_results = []
-
     for root, _, files in os.walk(repo_path):
         for file in files:
-            if file.endswith(".py"):
-                full_path = os.path.join(root, file)
-                try:
-                    with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
-                        content = f.read()
-                        secrets = extract_secret_candidates_regex(full_path, content)
-                        secrets += extract_secret_candidates_llama(full_path, content)
-
-                        for s in secrets:
-                            secret_val = s["value"]
-                            assignments = find_secret_assignments(secret_val, repo_path)
-
-                            for assign in assignments:
-                                secret_var = assign["var"]
-                                defining_file = assign["file"]
-
-                                related_files = track_variable_usage(secret_var, repo_path)
-                                related_files.add(defining_file)
-
-                                code_context = collect_related_code(related_files)
-
-                                all_results.append({
-                                    "secret": secret_val,
-                                    "source_var": secret_var,
-                                    "defined_in": defining_file,
-                                    "used_in": list(related_files),
-                                    "context": code_context
-                                })
-                except Exception:
-                    continue
-
+            full_path = os.path.join(root, file)
+            if not os.path.isfile(full_path): continue
+            if not is_text_file(full_path): continue
+            try:
+                with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                    secrets = extract_secret_candidates_regex(full_path, content)
+                    secrets += extract_secret_candidates_llama(llm,full_path, content)
+                    for s in secrets:
+                        secret_val = s["value"]
+                        assignments = find_secret_assignments(secret_val, repo_path)
+                        for assign in assignments:
+                            secret_var = assign["var"]
+                            defining_file = assign["file"]
+                            related_files = track_variable_usage(secret_var, repo_path)
+                            related_files.add(defining_file)
+                            code_context = collect_related_code(related_files)
+                            all_results.append({
+                                "secret": secret_val,
+                                "source_var": secret_var,
+                                "defined_in": defining_file,
+                                "used_in": list(related_files),
+                                "context": code_context
+                            })
+            except Exception: continue
     return all_results
+def is_text_file(path):
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            f.read(2048)  # נסה לקרוא קצת
+        return True
+    except:
+        return False
