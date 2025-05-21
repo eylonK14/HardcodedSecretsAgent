@@ -1,4 +1,5 @@
 from llama_cpp import Llama
+import json
 
 def analyze_with_llama(llm: Llama, context: str, secret: str) -> str:
     """
@@ -21,11 +22,10 @@ Respond strictly in the following JSON format:
 """
 
     try:
-        response = llm(
-            prompt=prompt,
-            stop=["\n\n"],  # stop at double newline
-            temperature=0.2
-        )
-        return response["choices"][0]["text"].strip()
+        output = llm(prompt=prompt, temperature=0, max_tokens=1024)
+        text = output["choices"][0]["text"].strip()
+        parsed = json.loads(text)
+        return parsed
     except Exception as e:
-        return f"LLM error: {e}"
+        print(f"[!] LLM error: {e}")
+        return {"safe": "unknown", "reason": str(e)}

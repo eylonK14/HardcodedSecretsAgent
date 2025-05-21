@@ -1,20 +1,43 @@
-# הנחה: llama 7B רץ מקומית עם HuggingFace Transformers או llama.cpp
+import re
+import json
 
-# אם אתה משתמש ב-llama.cpp:
-# pip install llama-cpp-python
+def extract_secret_candidates_llama(llm, file_path, file_content):
+    escaped_code = json.dumps(file_content)  # זה מבטיח שהקוד יהיה בטוח בתוך prompt
 
-def extract_secret_candidates_llama(llm,file_path, file_content):
-    prompt = f"""The following code is from a file called `{file_path}`.
-Analyze the code and identify any string literals that may represent hardcoded secrets, like passwords, tokens, API keys, or private keys.
+    prompt = f"""[INST] <<SYS>>
+You are a static code analysis assistant specialized in detecting *hardcoded secrets*
+Your job is to identify values that are:
+- sensitive (e.g., API keys, access tokens, passwords, database credentials),
+- hardcoded directly in the source code,
+- and should not be committed to a Git repository.
 
-Respond in this exact JSON format:
-[{{"value": "<the_secret>", "line": <line_number>}}]
+⚠️ DO NOT return values that are general string literals or clearly non-sensitive values
+
+Your analysis should ONLY include values that match the characteristics of real secrets.
+
+Format your response strictly and ONLY like this:
+[OUT]
+[{{"value": "<secret>", "line": <line_number>}}, ...]
+[/OUT]
+
+The code to analyze is from the file `{file_path}`:
 
 Code:
-{file_content}
+{escaped_code}
+[/INST]
 """
-    output = llm(prompt=prompt, stop=["\n\n"], temperature=0)
+
     try:
-        return [{"value": item["value"], "line": item["line"], "source": "llm", "file": file_path, "reason": "llm"} for item in eval(output["choices"][0]["text"])]
-    except:
+        output = llm(prompt=prompt, temperature=0, max_tokens=1024)
+        raw = output["choices"][0]["text"]
+        match = re.search(r"\[OUT\]\s*(.*?)\s*\[/OUT\]", raw, re.DOTALL)
+        if match:
+            json_text = match.group(1)
+            parsed = eval(json_text)
+            return [{"value":item["value"], "line":item["line"], "source":"llm", "file":file_path, "reason":"llm"} for item in parsed]
+        else:
+            print("[!] No [OUT] block found.")
+            return []
+    except Exception as e:
+        print(f"[!] Failed to get model output: {e}")
         return []
