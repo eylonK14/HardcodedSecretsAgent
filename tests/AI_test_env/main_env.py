@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 
 def fetch_data(api_key):
     print(f"Using API key")
-    # simulate API call...
 
 def main():
     load_dotenv()  # reads .env in current directory
