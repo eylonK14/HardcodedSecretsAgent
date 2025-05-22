@@ -1,47 +1,86 @@
-import os
-import tempfile
+import threading
 import subprocess
-from analyzer_llama import analyze_with_llama
-from context import step2_analyze_secrets
+import time
+import importlib.util
+import os
+import sys
+import tkinter as tk
+from tkinter import filedialog, scrolledtext, messagebox
+from smart_agent import run_analysis
+POLL_INTERVAL = 5  # seconds
 
-from llama_cpp import Llama
+class SecretWatcherApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Git Push Secret Watcher")
+        self.geometry("700x500")
 
-def clone_repo(git_url):
-    temp_dir = tempfile.mkdtemp()
-    subprocess.run(["git", "clone", git_url, temp_dir], check=True)
-    return temp_dir
+        # Repo selection
+        self.repo_path = None
+        btn_frame = tk.Frame(self)
+        btn_frame.pack(pady=10)
+        tk.Button(btn_frame, text="Select Git Repository", command=self.select_repo).pack(side=tk.LEFT, padx=5)
+        self.start_btn = tk.Button(btn_frame, text="Start Monitoring", state=tk.DISABLED, command=self.start_monitor)
+        self.start_btn.pack(side=tk.LEFT, padx=5)
+
+        # Output area
+        self.output = scrolledtext.ScrolledText(self, wrap=tk.WORD, font=("Consolas", 10))
+        self.output.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        self.monitor_thread = None
+        self.stopped = threading.Event()
+        self.last_remote_hash = None
+
+    def select_repo(self):
+        path = filedialog.askdirectory(title="Select your Git repository root")
+        if path and os.path.isdir(os.path.join(path, ".git")):
+            self.repo_path = path
+            self.output.insert(tk.END, f"📂 Repository set to: {self.repo_path}\n")
+            self.start_btn.config(state=tk.NORMAL)
+        else:
+            messagebox.showerror("Invalid Repository", "Selected folder is not a Git repository.")
+
+    def start_monitor(self):
+        if not self.repo_path: return
+        self.start_btn.config(state=tk.DISABLED)
+        self.output.insert(tk.END, "▶️ Starting monitor...\n")
+        self.stopped.clear()
+        # initialize last hash
+        self.last_remote_hash = self.get_remote_head()
+        self.monitor_thread = threading.Thread(target=self.monitor_loop, daemon=True)
+        self.monitor_thread.start()
+
+    def get_remote_head(self):
+        try:
+            completed = subprocess.run(
+                ["git", "ls-remote", "origin", "HEAD"],
+                cwd=self.repo_path,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=10
+            )
+            return completed.stdout.split()[0] if completed.stdout else None
+        except Exception:
+            return None
+
+    def monitor_loop(self):
+        while not self.stopped.is_set():
+            time.sleep(POLL_INTERVAL)
+            current = self.get_remote_head()
+            if current and current != self.last_remote_hash:
+                self.last_remote_hash = current
+                self.on_push_detected(current)
+
+    def on_push_detected(self, new_hash):
+        self.output.insert(tk.END, f"\n🔔 Detected new push: {new_hash}\n")
+        run_analysis(self.repo_path,self.output)
+
+    def on_close(self):
+        self.stopped.set()
+        self.destroy()
 
 if __name__ == "__main__":
-    print("[*] Initializing LLaMA model...")
-    llm = Llama(model_path="models/Nous-Hermes-2-Mistral-7B-DPO.Q5_K_M.gguf", n_ctx=2048)
-
-    git_urls = [
-        "https://github.com/AdamSinale/AI_test_plaintext.git",
-        "https://github.com/AdamSinale/AI_test_env.git",
-        "https://github.com/AdamSinale/AI_test_log.git",
-        "https://github.com/AdamSinale/AI_test_comment.git",
-        "https://github.com/AdamSinale/AI_test_unrelated_string.git"
-    ]
-    for git_url in git_urls:
-        repo_path = clone_repo(git_url)
-
-        # שלב 2: מציאת ההקשר של כל סוד והקבצים שמשתמשים בו
-        print("[*] Running context analyzer...")
-        full_analysis = step2_analyze_secrets(llm, repo_path)
-
-        print("\n[+] Final analysis with LLaMA:\n")
-        for idx, entry in enumerate(full_analysis, 1):
-            print(f"\n🔐 Secret #{idx}")
-            print(f"- Secret: {entry['secret']}")
-            print(f"- Variable: {entry['source_var']}")
-            print(f"- Defined in: {entry['defined_in']}")
-            print(f"- Used in files: {entry['used_in']}")
-
-            print("\n📄 Context:\n")
-            print(entry["context"][:1000])  # הצצה לקוד
-
-            # LLaMA analysis
-            result = analyze_with_llama(llm, entry["context"], entry["secret"])
-            print("\n🤖 LLaMA says:")
-            print("Is it safe? : " + str(result["safe"]))
-            print("Why? : " + result["reason"])
+    app = SecretWatcherApp()
+    app.protocol("WM_DELETE_WINDOW", app.on_close)
+    app.mainloop()

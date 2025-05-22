@@ -2,6 +2,7 @@ import os
 import ast
 from collections import defaultdict
 from typing import Dict, List, Set
+import subprocess
 
 from pyparsing import empty
 
@@ -32,8 +33,6 @@ def recursive_variable_propagation(defining_file: str, start_vars: Set[str], rep
     queue = list(start_vars)
     called_functions = set()
     max_depth = 10
-
-    # רקורסיה בין משתנים
     for depth in range(max_depth):
         new_vars = set()
         for root, _, files in os.walk(repo_path):
@@ -45,11 +44,7 @@ def recursive_variable_propagation(defining_file: str, start_vars: Set[str], rep
                         content = f.read()
                         tree = ast.parse(content)
                         file_used = False
-
                         for node in ast.walk(tree):
-                            print(f"\n[DEBUG] FILE_USED from: {file_path}")
-                            print(ast.dump(node, indent=4))
-                            # a = b
                             if isinstance(node, ast.Assign):
                                 if isinstance(node.value, ast.Name) and node.value.id in queue:
                                     for target in node.targets:
@@ -59,13 +54,9 @@ def recursive_variable_propagation(defining_file: str, start_vars: Set[str], rep
                                                 new_vars.add(var_name)
                                                 seen_vars.add(var_name)
                                                 file_used = True
-
-                            # שימוש ישיר במשתנה
                             elif isinstance(node, ast.Name):
                                 if node.id in queue:
                                     file_used = True
-
-                            # קריאה לפונקציה עם משתנה מהתור
                             elif isinstance(node, ast.Call):
                                 for arg in node.args:
                                     if isinstance(arg, ast.Name) and arg.id in queue:
@@ -75,11 +66,8 @@ def recursive_variable_propagation(defining_file: str, start_vars: Set[str], rep
 
                         if file_used: related_files.add(file_path)
                 except Exception: continue
-
         if not new_vars: break
         queue.extend(new_vars)
-
-    # שלב 2: מצא קבצים שמכילים את הפונקציות שנקראו עם הסוד
     for root, _, files in os.walk(repo_path):
         for file in files:
             if not file.endswith(".py"): continue
@@ -94,8 +82,6 @@ def recursive_variable_propagation(defining_file: str, start_vars: Set[str], rep
                             deeper_files = recursive_variable_propagation(file_path,param_names,repo_path)
                             related_files.update(deeper_files)
             except Exception: continue
-
-    # כלול גם את קובץ המקור
     return related_files
 
 
@@ -127,6 +113,7 @@ def step2_analyze_secrets(llm,repo_path: str):
     for root, _, files in os.walk(repo_path):
         for file in files:
             full_path = os.path.join(root, file)
+            if is_ignored_by_git(repo_path, full_path): continue
             if not os.path.isfile(full_path): continue
             if not is_text_file(full_path): continue
             try:
@@ -137,10 +124,11 @@ def step2_analyze_secrets(llm,repo_path: str):
                         defining_file = s["file"]
                         starting_vars = extract_variable_assignments_from_file(defining_file, secret_val)
                         related_files = recursive_variable_propagation(defining_file, starting_vars, repo_path)
-                        if len(related_files)==0: continue
                         related_files.add(defining_file)
-                        code_context = collect_related_code(related_files)
 
+                        if(is_sub_problem(related_files,all_results)): continue
+
+                        code_context = collect_related_code(related_files)
                         all_results.append({
                             "secret": secret_val,
                             "source_var": ", ".join(starting_vars) if starting_vars else None,
@@ -156,4 +144,23 @@ def is_text_file(path):
             f.read(2048)  # נסה לקרוא קצת
         return True
     except:
+        return False
+def is_sub_problem(related_files,all_results):
+    for existing in all_results:
+        if related_files.issubset(set(existing["used_in"])):
+             return True
+    return False
+def is_ignored_by_git(repo_path, filepath):
+    try:
+        if os.path.basename(filepath) == ".gitignore":
+            return True
+        result = subprocess.run(
+            ["git", "check-ignore", filepath],
+            cwd=repo_path,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True
+        )
+        return bool(result.stdout.strip())
+    except Exception:
         return False
